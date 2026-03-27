@@ -61,11 +61,11 @@ This repository does **not** set up all environments automatically. You will nee
 
 At minimum, this pipeline expects working installations of:
 
-- **ANARCI** ([GitHub](https://github.com/oxpig/ANARCI))
-- **ColabFold / localcolabfold** ([GitHub](https://github.com/sokrypton/ColabFold))
-- **ProteinMPNN** ([GitHub](https://github.com/dauparas/ProteinMPNN))
-- **scfvtools** ([GitHub](https://github.com/Colorado-State-University-Stasevich-Lab/scfvtools))
-- **structural-evolution (struct-evo)** ([GitHub](https://github.com/varun-shanker/structural-evolution))
+- **ANARCI** – https://github.com/oxpig/ANARCI  
+- **ColabFold / localcolabfold** – https://github.com/sokrypton/ColabFold  
+- **ProteinMPNN** – https://github.com/dauparas/ProteinMPNN  
+- **scfvtools** – https://github.com/Colorado-State-University-Stasevich-Lab/scfvtools  
+- **structural-evolution (struct-evo)** – https://github.com/varun-shanker/structural-evolution  
 
 ### Important note about environments
 
