@@ -71,11 +71,15 @@ At minimum, this pipeline expects working installations of:
 
 The shell script currently **switches among multiple conda environments during execution**. In its current form, it expects environment activation to work and expects certain tools to exist in those environments.
 
-In particular, the script activates:
+Each stage of the pipeline depends on a different environment:
 
-- `pmpnn` at startup and again before ProteinMPNN
-- `colabfold` before AF2 / ColabFold folding
-- `struct-evo` before struct-evo scoring
+| Stage                | Environment     |
+|---------------------|----------------|
+| Pipeline start      | pmpnn          |
+| AF2 folding         | colabfold      |
+| ProteinMPNN         | pmpnn          |
+| scfvtools scoring   | scfvtools_env  |
+| struct-evo scoring  | struct-evo     |
 
 So before using this repository on a new system, review the environment names and paths near the top and middle of `af2_pmpnnV7.sh`.
 
@@ -322,7 +326,13 @@ The exact file set depends on settings, but important outputs typically include:
 
 ## Optional web interface: `web_run_pipeline_full.py`
 
-The web interface is optional and simply wraps the same shell pipeline.
+The web interface is optional and simply wraps the same shell pipeline. This would typically run in a separate environment:
+
+Example setup:
+
+conda create -n scfv_web python=3.10
+conda activate scfv_web
+pip install gradio fastapi uvicorn
 
 ### What it does
 
@@ -360,17 +370,6 @@ http://localhost:7860
 
 ---
 
-## Notes about struct-evo
-
-At present, the pipeline **does require struct-evo**, because the shell script explicitly switches into the `struct-evo` environment and the score-merging logic expects struct-evo output.
-
-So for now, users should assume:
-
-- `struct-evo` is required for the current V7 shell pipeline
-- making it optional would require shell-script and merge-script updates
-
----
-
 ## Suggested usage pattern for new users
 
 A practical first test is:
@@ -392,29 +391,6 @@ input_dir=input_dir output_dir=output_dir seqs_per_run=20 run_AF2=false bash af2
 ```
 
 6. inspect the HTML and CSV outputs in `output_dir/Summary`
-
----
-
-## Repository structure
-
-```text
-af2_pmpnnV7.sh
-web_run_pipeline_full.py
-README.md
-
-scripts/
-    append_designs_to_summary.py
-    append_scores_to_summary.py
-    extract_chain_seq.py
-    make_combined_multimer_fasta.py
-    make_scfv_vernierV3.py
-    merge_preAF2_scores.py
-    merge_swi_evo_json.py
-    reorder_all_scores.py
-    select_top_bottom_random.py
-    swi_calculator.py
-    visualize_anarci_with_fasta.py
-```
 
 ---
 
