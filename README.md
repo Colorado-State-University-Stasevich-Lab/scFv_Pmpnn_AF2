@@ -1,88 +1,431 @@
 ![scFv Colored by 3 regions](images/F1.large.jpg "Graphical Abstract Intro Code")
 
-# **AI-assisted protein design to rapidly convert antibody sequences to intrabodies targeting diverse peptides and histone modifications** 
+# **AI-assisted protein design to rapidly convert antibody sequences to intrabodies targeting diverse peptides and histone modifications**
 
-## Set up:
-This was written with cuda 11.8 in mind, but should easily be exportable to any other cuda version; no custom GPU development was done. The following major packages are dependencies:
-- ANARCI (https://github.com/oxpig/ANARCI)
-- localcolabfold ([YoshitakaMo/localcolabfold: ColabFold on your local PC](https://github.com/YoshitakaMo/localcolabfold)) 
-- ProteinMPNN ([dauparas/ProteinMPNN: Code for the ProteinMPNN paper](https://github.com/dauparas/ProteinMPNN))
+This repository is based on the original `scFv_Pmpnn_AF2` workflow and extends it with an updated end-to-end shell pipeline, richer scoring and ranking, HTML summaries, and an optional Gradio web interface.
 
-And there are the following python dependencies:
-- Python 3.9
-- Biopython (should get installed when you install ANARCI)
-- NumPy (should get installed with both ANARCI and ProteinMPNN)
-- Matplotlib
-- Scipy
-- PyTorch (should get installed with ProteinMPNN)
-- Web Logo
+The main entry point in this fork is now:
 
-A `requirements.txt` file is not provided because 99% of the setup for this project is getting ANARCI, localcolabfold, and ProteinMPNN set up and operational in a singular environment. The extraneous libraries are very easy to install after getting the major 3 operational. If you find it useful, the conda env for this project is provided in `environment.yaml` - but again, it is highly recommended to install each of the 3 major dependicies independently, and not with this `.yaml` file. 
+- `af2_pmpnnV7.sh` — primary shell pipeline
+- `web_run_pipeline_full.py` — optional web interface that wraps the shell pipeline
 
-## Usage
-This pipeline was written with ease of use in mind. There are two scripts worth mentioning here. The first being the scFv-ification of antibody sequences (`scripts/scfv_anarci.py`), and the second being the actual run pipeline itself (`af2_pmpnn.sh`). 
+---
 
-### scFv-ification of an antibody
-An scFv (single chain variable fragment) is an antibody with only the CDR loops and variable region framework, of both the constant and heavy chains. A flexible linker is then used to combine the remaining regions to create and a single chain domain. The process of doing this is tedious and time consuming by hand; identify the CDR regions, identify the variable and constant regions, and stitch them together. For both speed and consistency, a script was written to quickly automate this process.
+## Overview
 
-Let’s use the hemagglutinin (HA) Heavy and Light chains for our example, called `HA.fasta` :
+This pipeline is designed to:
+
+1. take a single input structure or FASTA file
+2. identify VH/VL regions and CDRs with ANARCI
+3. build an scFv sequence and define non-designable positions
+4. optionally run ColabFold to generate a backbone
+5. run ProteinMPNN to generate sequence designs
+6. score designs with:
+   - `scfvtools`
+   - `struct-evo`
+   - SWI / probability of solubility
+7. merge scores, rank designs, and select Top / Bottom / Random sets
+8. optionally run AF2 on WT + selected designs
+9. generate summary HTML and output tables
+
+---
+
+## Major updates in this fork
+
+Compared with the original repository, this fork emphasizes:
+
+- `af2_pmpnnV7.sh` as the main production pipeline
+- `web_run_pipeline_full.py` as an optional Gradio front end
+- `scripts/make_scfv_vernierV3.py` for VH/VL extraction, CDR handling, linear sequence↔structure mapping, and Vernier shell detection
+- pre-AF2 score merging and ranking
+- Top / Bottom / Random design selection
+- summary HTML augmentation with ranked tables and colorized sequence blocks
+
+Useful helper scripts added in this fork include:
+
+- `scripts/make_scfv_vernierV3.py`
+- `scripts/merge_preAF2_scores.py`
+- `scripts/merge_swi_evo_json.py`
+- `scripts/select_top_bottom_random.py`
+- `scripts/swi_calculator.py`
+- `scripts/append_scores_to_summary.py`
+- `scripts/append_designs_to_summary.py`
+
+---
+
+## Installation / required software
+
+This repository does **not** set up all environments automatically. You will need to install and manage the required tools yourself.
+
+### Required tools / environments
+
+At minimum, this pipeline expects working installations of:
+
+- **ANARCI**
+- **ColabFold / localcolabfold**
+- **ProteinMPNN**
+- **scfvtools**
+- **structural-evolution** (`struct-evo` environment)
+
+### Important note about environments
+
+The shell script currently **switches among multiple conda environments during execution**. In its current form, it expects environment activation to work and expects certain tools to exist in those environments.
+
+In particular, the script activates:
+
+- `pmpnn` at startup and again before ProteinMPNN
+- `colabfold` before AF2 / ColabFold folding
+- `struct-evo` before struct-evo scoring
+
+So before using this repository on a new system, review the environment names and paths near the top and middle of `af2_pmpnnV7.sh`.
+
+### Important path assumptions
+
+This fork currently contains machine-specific path assumptions, for example:
+
+- `/home/tagteam/miniforge3/etc/profile.d/conda.sh`
+- `/home/tagteam/code/ProteinMPNN`
+- `~/Projects/structural-evolution/bin/score_log_likelihoods.py`
+
+You will likely need to edit these for your own machine, or override them where supported.
+
+---
+
+## Main way to run: `af2_pmpnnV7.sh`
+
+This is the main workflow in the repository.
+
+### Basic shell-script workflow
+
+The shell script is written around two directories:
+
+- `input_dir`
+- `output_dir`
+
+By default, the script looks for **one input file** inside `input_dir`, processes that file, and writes results into `output_dir`.
+
+### Step 1: prepare an input directory
+
+Create an input directory and place **exactly one input file** inside it.
+
+Supported input file types include:
+
+- `.pdb`
+- `.cif`
+- `.mmcif`
+- `.fa`
+- `.fasta`
+
+Examples:
+
+```bash
+mkdir -p input_dir
+cp my_structure.pdb input_dir/
 ```
->HA_heavy
-MKLPVLLVVLLLFTSPASSSEVKLVESGGDLVKPGGSLKLSCAASGFTFSSYGMSWVRQTPDKRLEWVATISRGGSYTYYPDSVKGRFTISRDNAKNTLYLQMSSLKSEDTAMYYCARRETYDEKGFAYWGQGTTVTVSSARPTAPSVYPLAPVCGDTTGSSVTLGCLVKGYFPEPVTLTWNSGSLSSGVHTFPAVLQSDLYTLSSSVTVTSSTWPSQSITCNVAHPASSTKVDKKIEPRGPTIKPCPPCKCPAPNLLGGPSVFIFPPKIKDVLMISLSPIVTCVVVDVSEDDPDVQISWFVNNVEVHTAQTQTHREDYNSTLRVVSALPIQHQDWMSGKEFKCKVNNKDLPAPIERTISKPKGSVRAPQVYVLPPPEEEMTKKQVTLTCMVTDFMPEDIYVEWTNNGKTELNYKNTEPVLDSDGSYFMYSKLRVEKKNWVERNSYSCSVVHEGLHNHHTTKSFSRTPGK
->HA_light
-MTSTLPFSPQVSTPRSKFATMEFQTQVLMSLLLCMSGAAADIELTQSPSSLTVTAGEKVTMSCKSSQSLLNSGNQKNYLTWYQQKPGQPPKLLIYWASTRESGVPDRFTGSGSGRDFTLTISSVQAEDLAVYYCQNDNSHPLTFGAGTKLELKRADAAPTVSIFPPSSEQLTSGGASVVCFLNNFYPKDINVKWKIDGSERQNGVLNSWTDQDSKDSTYSMSSTLTLTKDEYERHNSYTCEATHKTSTSPIVKSFNRNEC
+
+or
+
+```bash
+mkdir -p input_dir
+cp my_sequence.fasta input_dir/
 ```
 
-Identifing the variable regions, and stitching them together with the default flexible linker (`GGGGS` x3):
-`scfv_anarci.py HA.fasta`
-Yeilds the scFv sequence printed to the screen:
-`MEVKLVESGGDLVKPGGSLKLSCAASGFTFSSYGMSWVRQTPDKRLEWVATISRGGSYTYYPDSVKGRFTISRDNAKNTLYLQMSSLKSEDTAMYYCARRETYDEKGFAYWGQGTTVTVSSGGGGSGGGGSGGGGSDIELTQSPSSLTVTAGEKVTMSCKSSQSLLNSGNQKNYLTWYQQKPGQPPKLLIYWASTRESGVPDRFTGSGSGRDFTLTISSVQAEDLAVYYCQNDNSHPLTFGAGTKLELK`
+### Step 2: decide whether to use defaults or override variables
 
-If you’d like to use any other sequence besides the default, this is easily changable with the `—linker-seq` flag. Note that this DOES NOT check for legitimate amino acids:
+At the top of `af2_pmpnnV7.sh`, the pipeline defines user variables like this:
 
-`scfv_anarci.py HA.fasta --linker-seq GSGSGSGSGSGSGSG`
-`MEVKLVESGGDLVKPGGSLKLSCAASGFTFSSYGMSWVRQTPDKRLEWVATISRGGSYTYYPDSVKGRFTISRDNAKNTLYLQMSSLKSEDTAMYYCARRETYDEKGFAYWGQGTTVTVSSGSGSGSGSGSGSGSGDIELTQSPSSLTVTAGEKVTMSCKSSQSLLNSGNQKNYLTWYQQKPGQPPKLLIYWASTRESGVPDRFTGSGSGRDFTLTISSVQAEDLAVYYCQNDNSHPLTFGAGTKLELK`
-
-`scfv_anarci.py HA.fasta --linker-seq __science_is_cool__`
-`MEVKLVESGGDLVKPGGSLKLSCAASGFTFSSYGMSWVRQTPDKRLEWVATISRGGSYTYYPDSVKGRFTISRDNAKNTLYLQMSSLKSEDTAMYYCARRETYDEKGFAYWGQGTTVTVSS__science_is_cool__DIELTQSPSSLTVTAGEKVTMSCKSSQSLLNSGNQKNYLTWYQQKPGQPPKLLIYWASTRESGVPDRFTGSGSGRDFTLTISSVQAEDLAVYYCQNDNSHPLTFGAGTKLELK`
-
-If you’d like to save your sequence to a file, use the `--output` flag.
-`scfv_anarci.py HA.fasta --output HA_scfv` Will produce the file `HA_scfv.fasta` with sequence title `>HA_scfv`. And if we look inside that file:
-```
-$ cat HA_scfv.fasta
-
->HA_scfv
-MEVKLVESGGDLVKPGGSLKLSCAASGFTFSSYGMSWVRQTPDKRLEWVATISRGGSYTYYPDSVKGRFTISRDNAKNTLYLQMSSLKSEDTAMYYCARRETYDEKGFAYWGQGTTVTVSSGGGGSGGGGSGGGGSDIELTQSPSSLTVTAGEKVTMSCKSSQSLLNSGNQKNYLTWYQQKPGQPPKLLIYWASTRESGVPDRFTGSGSGRDFTLTISSVQAEDLAVYYCQNDNSHPLTFGAGTKLELK
+```bash
+input_dir="${input_dir:-input_dir}"
+output_dir="${output_dir:-output_dir}"
+determine_CDRs="${determine_CDRs:-martin}"
+...
 ```
 
-### scFv Framework Optimization
-Now that we’ve successfully created an scFv sequence, we can optimize its framework with the pipeline that is the crux of the protein design aspect of the paper. The heart and soul of the pipeline is the `af2_pmpnn.sh` bash script. In it are a handful of input variables that we’ll go over briefly.
+This means:
 
-`folder_with_pdbs="input_dir"` Is the input directory where all pdbs or fastas (one scFv per fasta!) we want to redesign the framework of should go. 
+- if you set an environment variable before launching the script, that value is used
+- otherwise the script falls back to the default shown in the file
 
-`seqs_per_run=3`  is the number of sequences to generate via ProteinMPNN for the scFv framework.
+So you can either:
 
-`determine_CDRs="martin"`  Is the method with which to determine the CDRs of the scFv. There are four supported options here:
-`martin`, `kabat`, and `chothia` are all self explanatory. These are the sequence numbering schemes with which the literature has widly used to identify CDRs in an antibody.
-The fourth and final one is `structure` . This takes a structure based approach (as opposed to sequence for the other 3) to identifying the CDR loops. A peptide and the scFv have their structure predicted via AF2, then all the residues within 6 angstroms of that peptide are considered the “CDRs”, and they are not allowed to mutate.
+#### Option A: edit defaults in the script itself
 
-`simple_grab=true` is used to determine how do we determine what residues are near the CDRs. For example, if two residues are near a CDR and create a “bridge” if 1 residue that isn’t, this residue would be allowed to change if `simple_grab` is set to `true`. However, if we set this to `false`, then that residue would artificially be considered part of the group of residues near the CDR loops that are not allowed to change. 
+For example, change:
 
-`output_dir="output_dir”` the name of the output directory
+```bash
+input_dir="${input_dir:-input_dir}"
+output_dir="${output_dir:-output_dir}"
+```
 
-`to_design="framework"` What are we redesigning during this run? This was put in to help with other projects from the Snow, Geiss, and Stasevich labs. `to_design` is only allowed to be 1 of 3 things: `framework` to redesign the framework of the scFv, `loops` to redesign the loops of the scFv, and `lss` to redesign both the loops and the secondary shell of the loops (all residues within 4A of the loops, modified by `simple_grab`). 
+to whatever you want.
 
-`PMPNN='path/to/my/ProteinMPNN'` Path to the ProteinMPNN directory 
+#### Option B: override on the command line
 
-In the output directory, there are 4 key files to look at (continuing our HA example):
-`HA_noWT.fa` contains all of the framework designed sequences that are produced.
-`HA_sequence_log.png` is an image of the sequence logo of the designed framework.
-`HA_plddt.png` is a plot of the pLDDT’s ([pLDDT: Understanding local confidence | AlphaFold](https://www.ebi.ac.uk/training/online/courses/alphafold/inputs-and-outputs/evaluating-alphafolds-predicted-structures-using-confidence-scores/plddt-understanding-local-confidence/)) for each scFv.
-`HA_ptm.png` is a plot of the pTM’s ([Confidence scores in AlphaFold-Multimer | AlphaFold](https://www.ebi.ac.uk/training/online/courses/alphafold/inputs-and-outputs/evaluating-alphafolds-predicted-structures-using-confidence-scores/confidence-scores-in-alphafold-multimer/)) for each scFv. 
+Example:
 
-To make our sequence selections, we took the top sequences that performed well in both pLDDT and pTM. 
+```bash
+input_dir=my_inputs output_dir=my_outputs determine_CDRs=martin ss_near_CDRs=3 linker_seq=GGGGSGGGGSGGGGS seqs_per_run=100 epitope_chain=B skip_folding=false pmpnn_seed=37 Nt=10 Nb=10 Nr=10 sort_column=scfvtools_blosum_diff_score run_AF2=false bash af2_pmpnnV7.sh
+```
 
-## TODO 
-Dockerfile / Docker image
+This is usually the cleanest way to run the pipeline without editing the script.
 
+---
 
+## User-configurable shell variables
+
+The main shell variables currently include:
+
+- `input_dir` — directory containing the single input file
+- `output_dir` — directory where outputs are written
+- `determine_CDRs` — CDR numbering scheme, e.g. `martin`, `chothia`, `kabat`, `IMGT`
+- `ss_near_CDRs` — protection distance near CDRs in Å
+- `linker_seq` — scFv linker sequence
+- `seqs_per_run` — number of ProteinMPNN sequences to generate
+- `epitope_chain` — epitope chain ID(s) for structure input, e.g. `B` or `B,C,F`
+- `skip_folding` — whether to skip initial AF2/ColabFold folding when possible
+- `PMPNN` — path to the ProteinMPNN installation
+- `pmpnn_seed` — ProteinMPNN seed
+- `Nt` — number of top designs to keep
+- `Nb` — number of bottom designs to keep
+- `Nr` — number of random designs to keep
+- `sort_column` — score column used for ranking
+- `run_AF2` — whether to run AF2 on WT + selected designs
+
+---
+
+## How input handling works
+
+### Structure input: PDB / CIF / mmCIF
+
+If the input is a structure:
+
+- the script reads the single file in `input_dir`
+- CIF / mmCIF can be converted to PDB for compatibility
+- the epitope chain(s) can be specified with `epitope_chain`
+- the scFv is expected to correspond to chain `A` for downstream design
+
+### FASTA input
+
+If the input is a FASTA file:
+
+- the pipeline detects FASTA automatically
+- if the sequence contains `SCFV:EPITOPE`, the script splits this into scFv and epitope parts
+- the scFv-only portion is passed into the scFv/Vernier logic
+- FASTA inputs are forced through AF2/ColabFold, because ProteinMPNN requires a structure backbone
+- for FASTA input, `epitope_chain` is effectively set to `None`
+
+---
+
+## Actual shell-script flow
+
+The current shell pipeline proceeds roughly as follows:
+
+### Step 0 — load one input file
+
+The script finds the first file in `input_dir`. If no file is present, it exits with an error.
+
+### Step 1 — determine CDRs + build scFv FASTA
+
+`scripts/make_scfv_vernierV3.py` is used to:
+
+- identify VH and VL
+- define CDR regions
+- combine VH + linker + VL into an scFv
+- determine fixed / designable positions
+- generate mapping files and an HTML summary scaffold
+
+### Step 2 — initial ColabFold / AF2 backbone generation
+
+The script switches to the `colabfold` environment and either:
+
+- skips folding and reuses the input structure, or
+- runs `colabfold_batch`
+
+If the input was FASTA, folding is forced.
+
+### Step 3 — ProteinMPNN design
+
+The script switches back to the `pmpnn` environment and:
+
+- parses the chosen structure
+- assigns chain A for design
+- creates fixed-position JSONL files
+- runs `protein_mpnn_run.py`
+
+### Step 4 — build combined FASTA of WT + designs
+
+The script assembles a combined FASTA that includes WT plus generated designs.
+
+### Step 5 — scoring and pre-AF2 ranking
+
+This stage includes:
+
+- `scfvtools` scoring
+- switching to the `struct-evo` environment for struct-evo scoring
+- SWI calculation
+- merging scores with `scripts/merge_preAF2_scores.py`
+- selecting Top / Bottom / Random designs with `scripts/select_top_bottom_random.py`
+
+### Step 5E — FASTA subsets + summary augmentation
+
+The pipeline builds FASTA files for:
+
+- top designs
+- bottom designs
+- random designs
+
+and appends those to the summary HTML.
+
+### Step 6 — optional AF2 on WT + selected designs
+
+If `run_AF2=true`, WT plus selected Top / Bottom / Random designs are folded with AF2 / ColabFold.
+
+### Step 7 — merge post-AF2 metrics
+
+AF2 JSON metrics are merged with prior scores using `scripts/merge_swi_evo_json.py`.
+
+### Step 8 — summary output
+
+HTML summary content is extended with:
+
+- ranked score tables
+- colorized design sequences
+- mutation highlighting
+
+---
+
+## Key outputs
+
+The exact file set depends on settings, but important outputs typically include:
+
+### In `output_dir/`
+
+- `scfv_output.fasta`
+- `combined_multimer.fa`
+- `merged_preAF2_scores.csv`
+- AF2 / ColabFold result folders
+- ProteinMPNN output folders
+
+### In `output_dir/Summary/`
+
+- `*_summary.html`
+- `selected_top.csv`
+- `selected_bottom.csv`
+- `selected_random.csv`
+- `selected_for_af2.txt`
+- `top_designs.fa`
+- `bottom_designs.fa`
+- `random_designs.fa`
+- mapping / design-position text files
+
+---
+
+## Optional web interface: `web_run_pipeline_full.py`
+
+The web interface is optional and simply wraps the same shell pipeline.
+
+### What it does
+
+The Gradio app:
+
+- creates a temporary working directory
+- creates temporary `input_dir` and `output_dir`
+- copies the `scripts/` directory into that working directory
+- passes user-selected options into the shell script through environment variables
+- streams the live shell log
+- packages the final outputs into `results.zip`
+- renders a summary HTML preview if present
+
+### Run it
+
+```bash
+python web_run_pipeline_full.py
+```
+
+Then open the local Gradio URL, usually:
+
+```text
+http://localhost:7860
+```
+
+### Web interface usage summary
+
+- upload a single PDB/CIF/mmCIF/FASTA file
+- choose CDR scheme, linker, protection distance, epitope chain(s), GPU, seed, and design counts
+- optionally enable AF2 on WT + designs
+- click **Run pipeline**
+- inspect the live log
+- download `results.zip`
+- preview the summary HTML in the browser
+
+---
+
+## Notes about struct-evo
+
+At present, the pipeline **does require struct-evo**, because the shell script explicitly switches into the `struct-evo` environment and the score-merging logic expects struct-evo output.
+
+So for now, users should assume:
+
+- `struct-evo` is required for the current V7 shell pipeline
+- making it optional would require shell-script and merge-script updates
+
+---
+
+## Suggested usage pattern for new users
+
+A practical first test is:
+
+1. install / verify all required environments
+2. edit `PMPNN` and any machine-specific paths in `af2_pmpnnV7.sh`
+3. create `input_dir`
+4. place one test PDB or FASTA into `input_dir`
+5. run:
+
+```bash
+bash af2_pmpnnV7.sh
+```
+
+or with explicit overrides:
+
+```bash
+input_dir=input_dir output_dir=output_dir seqs_per_run=20 run_AF2=false bash af2_pmpnnV7.sh
+```
+
+6. inspect the HTML and CSV outputs in `output_dir/Summary`
+
+---
+
+## Repository structure
+
+```text
+af2_pmpnnV7.sh
+web_run_pipeline_full.py
+README.md
+
+scripts/
+    append_designs_to_summary.py
+    append_scores_to_summary.py
+    extract_chain_seq.py
+    make_combined_multimer_fasta.py
+    make_scfv_vernierV3.py
+    merge_preAF2_scores.py
+    merge_swi_evo_json.py
+    reorder_all_scores.py
+    select_top_bottom_random.py
+    swi_calculator.py
+    visualize_anarci_with_fasta.py
+```
+
+---
+
+## Acknowledgments
+
+This workflow builds on and depends on several important external tools, including:
+
+- ANARCI
+- ProteinMPNN
+- ColabFold / AlphaFold2
+- scfvtools
+- structural-evolution
+
+Please also acknowledge the original upstream repository that this fork extends.
